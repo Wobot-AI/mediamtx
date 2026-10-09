@@ -1224,7 +1224,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		return res, err
 
 	case base.Play:
-		// play can be sent twice, allow calling it even if we're already playing
+		// play can be sent twice, allow calling it even when we're already playing.
 		err := ss.checkState(map[ServerSessionState]struct{}{
 			ServerSessionStatePrePlay: {},
 			ServerSessionStatePlay:    {},
@@ -1323,7 +1323,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		})
 		if err != nil {
 			return &base.Response{
-				StatusCode: base.StatusBadRequest,
+				StatusCode: base.StatusMethodNotAllowed,
 			}, err
 		}
 
@@ -1391,6 +1391,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		return res, err
 
 	case base.Pause:
+		// some devices require support for double PAUSE requests.
 		err := ss.checkState(map[ServerSessionState]struct{}{
 			ServerSessionStatePrePlay:   {},
 			ServerSessionStatePlay:      {},
@@ -1399,7 +1400,7 @@ func (ss *ServerSession) handleRequestInner(sc *ServerConn, req *base.Request) (
 		})
 		if err != nil {
 			return &base.Response{
-				StatusCode: base.StatusBadRequest,
+				StatusCode: base.StatusMethodNotValidInThisState,
 			}, err
 		}
 

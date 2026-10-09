@@ -1,4 +1,4 @@
-package rtph265
+package rtph265_test
 
 import (
 	"bytes"
@@ -9,12 +9,14 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph265"
 )
 
 func TestDecode(t *testing.T) {
 	for _, ca := range cases {
 		t.Run(ca.name, func(t *testing.T) {
-			var d Decoder
+			var d rtph265.Decoder
 			err := d.Init()
 			require.NoError(t, err)
 
@@ -29,7 +31,7 @@ func TestDecode(t *testing.T) {
 				// test input integrity
 				require.Equal(t, clone, pkt)
 
-				if errors.Is(err, ErrMorePacketsNeeded) {
+				if errors.Is(err, rtph265.ErrMorePacketsNeeded) {
 					continue
 				}
 
@@ -255,7 +257,7 @@ var casesDecodeOnly = []struct {
 func TestDecodeOnly(t *testing.T) {
 	for _, ca := range casesDecodeOnly {
 		t.Run(ca.name, func(t *testing.T) {
-			var d Decoder
+			var d rtph265.Decoder
 			err := d.Init()
 			require.NoError(t, err)
 
@@ -265,7 +267,7 @@ func TestDecodeOnly(t *testing.T) {
 				au, err = d.Decode(pkt)
 
 				if i != len(ca.pkts)-1 {
-					require.ErrorIs(t, err, ErrMorePacketsNeeded)
+					require.ErrorIs(t, err, rtph265.ErrMorePacketsNeeded)
 				} else {
 					require.NoError(t, err)
 				}
@@ -277,7 +279,7 @@ func TestDecodeOnly(t *testing.T) {
 }
 
 func TestDecodeErrorNALUSize(t *testing.T) {
-	var d Decoder
+	var d rtph265.Decoder
 	err := d.Init()
 	require.NoError(t, err)
 
@@ -313,7 +315,7 @@ func TestDecodeErrorNALUSize(t *testing.T) {
 }
 
 func TestDecodeErrorNALUCount(t *testing.T) {
-	var d Decoder
+	var d rtph265.Decoder
 	err := d.Init()
 	require.NoError(t, err)
 
@@ -334,8 +336,68 @@ func TestDecodeErrorNALUCount(t *testing.T) {
 	require.EqualError(t, err, "NALU count (22) exceeds maximum allowed (21)")
 }
 
+func TestDecodeErrorEmptyFU(t *testing.T) {
+	var d rtph265.Decoder
+	err := d.Init()
+	require.NoError(t, err)
+
+	au, err := d.Decode(&rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 1},
+		Payload: []byte{0x62, 0x00, 0x80, 0x01},
+	})
+	require.Nil(t, au)
+	require.ErrorIs(t, err, rtph265.ErrMorePacketsNeeded)
+
+	au, err = d.Decode(&rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 2, Marker: true},
+		Payload: []byte{0x62, 0x00, 0x40},
+	})
+	require.Nil(t, au)
+	require.EqualError(t, err, "fragmented NALU doesn't contain any NALU")
+
+	au, err = d.Decode(&rtp.Packet{
+		Header:  rtp.Header{Marker: true},
+		Payload: []byte{0x26, 0x01, 0x88},
+	})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{{0x26, 0x01, 0x88}}, au)
+}
+
+func TestDecodeErrorEmptyFUPreservesBufferedAU(t *testing.T) {
+	var d rtph265.Decoder
+	err := d.Init()
+	require.NoError(t, err)
+
+	au, err := d.Decode(&rtp.Packet{
+		Payload: []byte{0x26, 0x01, 0x88},
+	})
+	require.Nil(t, au)
+	require.ErrorIs(t, err, rtph265.ErrMorePacketsNeeded)
+
+	au, err = d.Decode(&rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 1},
+		Payload: []byte{0x62, 0x00, 0x80, 0x01},
+	})
+	require.Nil(t, au)
+	require.ErrorIs(t, err, rtph265.ErrMorePacketsNeeded)
+
+	au, err = d.Decode(&rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 2, Marker: true},
+		Payload: []byte{0x62, 0x00, 0x40},
+	})
+	require.Nil(t, au)
+	require.EqualError(t, err, "fragmented NALU doesn't contain any NALU")
+
+	au, err = d.Decode(&rtp.Packet{
+		Header:  rtp.Header{Marker: true},
+		Payload: []byte{0x02, 0x01, 0x99},
+	})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{{0x26, 0x01, 0x88}, {0x02, 0x01, 0x99}}, au)
+}
+
 func TestDecodeErrorMissingPacket(t *testing.T) {
-	var d Decoder
+	var d rtph265.Decoder
 	err := d.Init()
 	require.NoError(t, err)
 
@@ -349,7 +411,7 @@ func TestDecodeErrorMissingPacket(t *testing.T) {
 		},
 		Payload: []byte{0x63, 0x02, 0x80, 0x03, 0x04},
 	})
-	require.Equal(t, ErrMorePacketsNeeded, err)
+	require.Equal(t, rtph265.ErrMorePacketsNeeded, err)
 
 	_, err = d.Decode(&rtp.Packet{
 		Header: rtp.Header{
@@ -362,6 +424,108 @@ func TestDecodeErrorMissingPacket(t *testing.T) {
 		Payload: []byte{0x63, 0x02, 0x00, 0x04},
 	})
 	require.EqualError(t, err, "discarding frame since a RTP packet is missing")
+}
+
+func TestDecodeTrailingSEI(t *testing.T) {
+	picture := []byte{0x26, 0x01, 0x88}
+	prefix := []byte{0x4e, 0x01, 0x05}
+	suffix := []byte{0x50, 0x01, 0x05}
+	nonIDR := []byte{0x02, 0x01, 0x9a}
+
+	tests := []struct {
+		name     string
+		packets  []*rtp.Packet
+		outcomes [][][]byte
+		waiting  []bool
+	}{
+		{
+			name: "trailing prefix and suffix SEIs",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: suffix},
+				{Header: rtp.Header{Marker: true, Timestamp: 200}, Payload: nonIDR},
+			},
+			outcomes: [][][]byte{{picture}, nil, nil, {nonIDR}},
+			waiting:  []bool{false, true, true, false},
+		},
+		{
+			name: "different timestamp",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Marker: true, Timestamp: 200}, Payload: prefix},
+				{Header: rtp.Header{Marker: true, Timestamp: 200}, Payload: suffix},
+			},
+			outcomes: [][][]byte{{picture}, {prefix}, {suffix}},
+			waiting:  []bool{false, false, false},
+		},
+		{
+			name: "no previous picture",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: suffix},
+			},
+			outcomes: [][][]byte{{prefix}, {suffix}},
+			waiting:  []bool{false, false},
+		},
+		{
+			name: "SEI before first picture at same timestamp",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+			},
+			outcomes: [][][]byte{{prefix}, {picture}, nil},
+			waiting:  []bool{false, false, true},
+		},
+		{
+			name: "non-SEI AU precedes SEI",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: []byte{0x46, 0x01, 0x10}},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+			},
+			outcomes: [][][]byte{{picture}, {{0x46, 0x01, 0x10}}, nil},
+			waiting:  []bool{false, false, true},
+		},
+		{
+			name: "mixed picture and SEI",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Timestamp: 100}, Payload: prefix},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: nonIDR},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: prefix},
+			},
+			outcomes: [][][]byte{{picture}, nil, {prefix, nonIDR}, nil},
+			waiting:  []bool{false, true, false, true},
+		},
+		{
+			name: "aggregated SEIs",
+			packets: []*rtp.Packet{
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: picture},
+				{Header: rtp.Header{Marker: true, Timestamp: 100}, Payload: []byte{0x60, 0x01, 0, 3, 0x4e, 1, 5, 0, 3, 0x50, 1, 5}},
+			},
+			outcomes: [][][]byte{{picture}, nil},
+			waiting:  []bool{false, true},
+		},
+	}
+
+	for _, ca := range tests {
+		t.Run(ca.name, func(t *testing.T) {
+			var d rtph265.Decoder
+			require.NoError(t, d.Init())
+
+			for i, pkt := range ca.packets {
+				au, err := d.Decode(pkt)
+				if ca.waiting[i] {
+					require.ErrorIs(t, err, rtph265.ErrMorePacketsNeeded)
+				} else {
+					require.NoError(t, err)
+				}
+				require.Equal(t, ca.outcomes[i], au)
+			}
+		})
+	}
 }
 
 func serializePackets(packets []*rtp.Packet) ([]byte, error) {
@@ -443,21 +607,30 @@ func FuzzDecoder(f *testing.F) {
 		0x78, 0x62, 0x00, 0x01, 0x03, 0x04,
 	})
 
+	buf, err := serializePackets([]*rtp.Packet{
+		{Header: rtp.Header{SequenceNumber: 1}, Payload: []byte{0x62, 0x00, 0x80, 0x01}},
+		{Header: rtp.Header{SequenceNumber: 2, Marker: true}, Payload: []byte{0x62, 0x00, 0x40}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	f.Add(buf)
+
 	f.Fuzz(func(t *testing.T, buf []byte) {
-		packets, err := unserializePackets(buf)
-		if err != nil {
+		packets, err2 := unserializePackets(buf)
+		if err2 != nil {
 			t.Skip()
 			return
 		}
 
-		var d Decoder
-		err = d.Init()
-		require.NoError(t, err)
+		var d rtph265.Decoder
+		err2 = d.Init()
+		require.NoError(t, err2)
 
 		for _, pkt := range packets {
 			var au [][]byte
-			au, err = d.Decode(pkt)
-			if err != nil {
+			au, err2 = d.Decode(pkt)
+			if err2 != nil {
 				continue
 			}
 
@@ -467,12 +640,12 @@ func FuzzDecoder(f *testing.F) {
 				require.NotEmpty(t, nalu)
 			}
 
-			e := &Encoder{
+			e := &rtph265.Encoder{
 				SSRC:                  new(uint32(12321)),
 				InitialSequenceNumber: new(uint16(45432)),
 			}
-			err = e.Init()
-			require.NoError(t, err)
+			err2 = e.Init()
+			require.NoError(t, err2)
 
 			e.Encode(au) //nolint:errcheck
 		}
