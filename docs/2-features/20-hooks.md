@@ -80,6 +80,56 @@ pathDefaults:
   runOnUnDemand:
 ```
 
+## runOnDemandHTTPAddress
+
+`runOnDemandHTTPAddress` is an alternative to `runOnDemand` for publishers that are started through an API rather than by a local command. When the path is requested by a reader, MediaMTX performs an HTTP request; when there are no readers anymore, it performs a second one. Readers are put on hold until something starts publishing, exactly as with `runOnDemand`.
+
+```yml
+pathDefaults:
+  # URL to call with an HTTP request when the path is requested by a reader.
+  runOnDemandHTTPAddress: https://my-api/streams/initiate
+  # Headers of the request, in "Name: value" form.
+  runOnDemandHTTPHeaders:
+    - 'Content-Type: application/json'
+    - 'x-api-key: $MY_API_KEY'
+  # Body of the request.
+  runOnDemandHTTPBody: '{"stream":"$MTX_PATH","type":"start"}'
+  # Body of the request performed when there are no readers anymore.
+  runOnUnDemandHTTPBody: '{"stream":"$MTX_PATH","type":"stop"}'
+```
+
+The address, headers and body support the same `$VAR` substitutions as `runOnDemand`. Variables that are not among them are looked up in the process environment, which is the recommended way to keep credentials out of the configuration file — in the example above, `$MY_API_KEY` is read from MediaMTX's own environment. Header values are redacted in the responses of the Control API.
+
+Requests are performed asynchronously and never block the path. Transport errors and the status codes 408, 429 and 5xx are retried with an exponential backoff, up to `runOnDemandHTTPRetries` times; demand requests are additionally bounded by `runOnDemandStartTimeout`, since retrying past the moment readers give up serves no purpose. A demand request that is definitively refused (for instance with a 401) is not followed by an un-demand request, since the remote side is known not to have started.
+
+Requests that share a `runOnDemandHTTPKey` are never performed concurrently nor out of order, so an un-demand request can never overtake the demand request it undoes. The key defaults to `$MTX_PATH`; set it to the identifier of the remote stream when the same stream can be reached through multiple path names:
+
+```yml
+paths:
+  # path names like "mycompany-mylocation/mycamera"
+  '~^([^/]+)-([^/]+)/(.+)$':
+    runOnDemandHTTPAddress: https://my-api/streams/initiate
+    runOnDemandHTTPBody: '{"camera":"$G3","type":"start"}'
+    runOnUnDemandHTTPBody: '{"camera":"$G3","type":"stop"}'
+    runOnDemandHTTPKey: $G3
+```
+
+Note that an un-demand request is also sent when the publisher disconnects on its own and the readers then drain, so the remote endpoint should treat a stop for an already-stopped stream as a no-op.
+
+### Excluding health checks
+
+Some readers should observe a stream without causing it to exist — a health check that periodically fetches a frame, for instance. `runOnDemandExcludeQuery` is a regular expression matched against the query of each reader request; matching readers are **passive**:
+
+- they never trigger a demand request, and are refused immediately when the stream is not available, rather than being held until `runOnDemandStartTimeout`;
+- they never keep a stream alive: they do not cancel a pending un-demand, and they are not counted when deciding whether anyone is still watching.
+
+```yml
+pathDefaults:
+  runOnDemandExcludeQuery: 'type=healthcheck'
+```
+
+A probe then reads `rtsp://localhost:8554/mypath?type=healthcheck`: it receives frames while the stream is live, fails fast while it is not, and in neither case changes when the stream starts or stops. Without this, a probe that runs more often than `runOnDemandCloseAfter` would keep resetting the timer and the stream would never stop.
+
 ## runOnAvailable
 
 `runOnAvailable` allows to run a command when a stream is available to be read:

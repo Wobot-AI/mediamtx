@@ -1,0 +1,21 @@
+services:
+  mediamtx:
+    build:
+      context: ../..            # repo root, so the build sees the full source tree
+      dockerfile: testing/ondemand-http-hook/Dockerfile
+    container_name: ondemand-http-hook-mediamtx
+    ports:
+      - "8554:8554"             # RTSP
+    environment:
+      - WOCAM_API_KEY=${WOCAM_API_KEY:?set WOCAM_API_KEY in .env or the environment}
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
+  # optional: a fake smart-streamer API for fully offline testing.
+  # enable with: docker compose --profile mock up --build
+  # and switch runOnDemandHTTPAddress in mediamtx.yml to the mock-api URL.
+  mock-api:
+    build: ./mock-api
+    container_name: ondemand-http-hook-mock-api
+    profiles: ["mock"]

@@ -50,7 +50,9 @@ func (c *Cmd) Close() {
 	close(c.terminate)
 }
 
-func expandEnv(s string, env Environment) string {
+// ExpandEnv replaces $VAR references in s with values from env,
+// falling back to the process environment.
+func ExpandEnv(s string, env Environment) string {
 	return os.Expand(s, func(variable string) string {
 		if value, ok := env[variable]; ok {
 			return value

@@ -14,6 +14,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/defs"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
+	"github.com/bluenviron/mediamtx/internal/httphook"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
 	"github.com/bluenviron/mediamtx/internal/servers/hls"
@@ -87,6 +88,7 @@ type pathManager struct {
 	pathConfs         map[string]*conf.Path
 	authManager       pathManagerAuthManager
 	externalCmdPool   *externalcmd.Pool
+	httpHookPool      *httphook.Pool
 	metrics           *metrics.Metrics
 	parent            pathManagerParent
 
@@ -526,6 +528,7 @@ func (pm *pathManager) createPath(
 		matches:           matches,
 		wg:                &pm.wg,
 		externalCmdPool:   pm.externalCmdPool,
+		httpHookPool:      pm.httpHookPool,
 		parent:            pm,
 	}
 	pa.initialize()

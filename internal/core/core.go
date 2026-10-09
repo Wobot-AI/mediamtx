@@ -26,6 +26,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/confwatcher"
 	"github.com/bluenviron/mediamtx/internal/externalcmd"
+	"github.com/bluenviron/mediamtx/internal/httphook"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/metrics"
 	"github.com/bluenviron/mediamtx/internal/playback"
@@ -209,6 +210,7 @@ type Core struct {
 	supportsIPv6    bool
 	logger          *logger.Logger
 	externalCmdPool *externalcmd.Pool
+	httpHookPool    *httphook.Pool
 	authManager     *auth.Manager
 	metrics         *metrics.Metrics
 	pprof           *pprof.PPROF
@@ -537,6 +539,9 @@ func (p *Core) createResources(initial bool) error {
 
 		p.externalCmdPool = &externalcmd.Pool{}
 		p.externalCmdPool.Initialize()
+
+		p.httpHookPool = &httphook.Pool{}
+		p.httpHookPool.Initialize()
 	}
 
 	if p.authManager == nil {
@@ -650,6 +655,7 @@ func (p *Core) createResources(initial bool) error {
 			pathConfs:         currentConf.Paths,
 			authManager:       p.authManager,
 			externalCmdPool:   p.externalCmdPool,
+			httpHookPool:      p.httpHookPool,
 			metrics:           p.metrics,
 			parent:            p,
 		}
@@ -1329,6 +1335,10 @@ func (p *Core) closeResources(newConf *conf.Conf) {
 	if newConf == nil && p.externalCmdPool != nil {
 		p.Log(logger.Info, "waiting for running hooks")
 		p.externalCmdPool.Close()
+	}
+
+	if newConf == nil && p.httpHookPool != nil {
+		p.httpHookPool.Close()
 	}
 
 	if closeLogger && p.logger != nil {

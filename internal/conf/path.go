@@ -349,27 +349,57 @@ type Path struct {
 	RPICameraSecondaryMJPEGQuality uint      `json:"-"` // filled by Validate()
 
 	// Hooks
-	RunOnInit                  string   `json:"runOnInit"`
-	RunOnInitRestart           bool     `json:"runOnInitRestart"`
-	RunOnDemand                string   `json:"runOnDemand"`
-	RunOnDemandRestart         bool     `json:"runOnDemandRestart"`
-	RunOnDemandStartTimeout    Duration `json:"runOnDemandStartTimeout"`
-	RunOnDemandCloseAfter      Duration `json:"runOnDemandCloseAfter"`
-	RunOnUnDemand              string   `json:"runOnUnDemand"`
-	RunOnAvailable             string   `json:"runOnAvailable"`
-	RunOnAvailableRestart      bool     `json:"runOnAvailableRestart"`
-	RunOnUnavailable           string   `json:"runOnUnavailable"`
-	RunOnReady                 *string  `json:"runOnReady,omitempty" deprecated:"true"`
-	RunOnReadyRestart          *bool    `json:"runOnReadyRestart,omitempty" deprecated:"true"`
-	RunOnNotReady              *string  `json:"runOnNotReady,omitempty" deprecated:"true"`
-	RunOnOnline                string   `json:"runOnOnline"`
-	RunOnOnlineRestart         bool     `json:"runOnOnlineRestart"`
-	RunOnOffline               string   `json:"runOnOffline"`
-	RunOnRead                  string   `json:"runOnRead"`
-	RunOnReadRestart           bool     `json:"runOnReadRestart"`
-	RunOnUnread                string   `json:"runOnUnread"`
-	RunOnRecordSegmentCreate   string   `json:"runOnRecordSegmentCreate"`
-	RunOnRecordSegmentComplete string   `json:"runOnRecordSegmentComplete"`
+	RunOnInit               string   `json:"runOnInit"`
+	RunOnInitRestart        bool     `json:"runOnInitRestart"`
+	RunOnDemand             string   `json:"runOnDemand"`
+	RunOnDemandRestart      bool     `json:"runOnDemandRestart"`
+	RunOnDemandStartTimeout Duration `json:"runOnDemandStartTimeout"`
+	RunOnDemandCloseAfter   Duration `json:"runOnDemandCloseAfter"`
+	RunOnUnDemand           string   `json:"runOnUnDemand"`
+	// URL to call with an HTTP request when the path is requested by a reader.
+	RunOnDemandHTTPAddress string `json:"runOnDemandHTTPAddress"`
+	// headers of the runOnDemandHTTPAddress request, in "Name: value" form.
+	RunOnDemandHTTPHeaders []string `json:"runOnDemandHTTPHeaders"`
+	// body of the runOnDemandHTTPAddress request.
+	RunOnDemandHTTPBody string `json:"runOnDemandHTTPBody"`
+	// URL to call with an HTTP request when the path is no longer requested by any reader.
+	// If empty, runOnDemandHTTPAddress is used.
+	RunOnUnDemandHTTPAddress string `json:"runOnUnDemandHTTPAddress"`
+	// headers of the runOnUnDemandHTTPAddress request, in "Name: value" form.
+	// If empty, runOnDemandHTTPHeaders is used.
+	RunOnUnDemandHTTPHeaders []string `json:"runOnUnDemandHTTPHeaders"`
+	// body of the runOnUnDemandHTTPAddress request.
+	RunOnUnDemandHTTPBody string `json:"runOnUnDemandHTTPBody"`
+	// regular expression matched against the query of a reader request.
+	// Matching readers are passive: they never start an on-demand publisher and
+	// never keep one alive. They are served if the stream is already available
+	// and refused otherwise. Intended for health checks and similar probes.
+	RunOnDemandExcludeQuery string `json:"runOnDemandExcludeQuery"`
+	// compiled form of RunOnDemandExcludeQuery.
+	RunOnDemandExcludeQueryRegexp *regexp.Regexp `json:"-"` // filled by Validate()
+	// key used to serialize demand and un-demand requests against each other.
+	// Requests sharing a key are never performed concurrently nor out of order.
+	RunOnDemandHTTPKey string `json:"runOnDemandHTTPKey"`
+	// timeout of a single demand or un-demand HTTP request.
+	RunOnDemandHTTPTimeout Duration `json:"runOnDemandHTTPTimeout"`
+	// maximum number of retries of a failed demand or un-demand HTTP request.
+	RunOnDemandHTTPRetries int `json:"runOnDemandHTTPRetries"`
+	// interval between the first two attempts; it doubles after each attempt.
+	RunOnDemandHTTPRetryInterval Duration `json:"runOnDemandHTTPRetryInterval"`
+	RunOnAvailable               string   `json:"runOnAvailable"`
+	RunOnAvailableRestart        bool     `json:"runOnAvailableRestart"`
+	RunOnUnavailable             string   `json:"runOnUnavailable"`
+	RunOnReady                   *string  `json:"runOnReady,omitempty" deprecated:"true"`
+	RunOnReadyRestart            *bool    `json:"runOnReadyRestart,omitempty" deprecated:"true"`
+	RunOnNotReady                *string  `json:"runOnNotReady,omitempty" deprecated:"true"`
+	RunOnOnline                  string   `json:"runOnOnline"`
+	RunOnOnlineRestart           bool     `json:"runOnOnlineRestart"`
+	RunOnOffline                 string   `json:"runOnOffline"`
+	RunOnRead                    string   `json:"runOnRead"`
+	RunOnReadRestart             bool     `json:"runOnReadRestart"`
+	RunOnUnread                  string   `json:"runOnUnread"`
+	RunOnRecordSegmentCreate     string   `json:"runOnRecordSegmentCreate"`
+	RunOnRecordSegmentComplete   string   `json:"runOnRecordSegmentComplete"`
 }
 
 func (pconf *Path) setDefaults() {
@@ -429,6 +459,10 @@ func (pconf *Path) setDefaults() {
 	// Hooks
 	pconf.RunOnDemandStartTimeout = 10 * Duration(time.Second)
 	pconf.RunOnDemandCloseAfter = 10 * Duration(time.Second)
+	pconf.RunOnDemandHTTPKey = "$MTX_PATH"
+	pconf.RunOnDemandHTTPTimeout = 10 * Duration(time.Second)
+	pconf.RunOnDemandHTTPRetries = 3
+	pconf.RunOnDemandHTTPRetryInterval = 2 * Duration(time.Second)
 }
 
 func newPath(defaults *Path, partial *OptionalPath) *Path {
@@ -846,7 +880,7 @@ func (pconf *Path) validate(
 			return fmt.Errorf("'sourceOnDemand' is not compatible with 'alwaysAvailable'")
 		}
 
-		if pconf.RunOnDemand != "" || pconf.RunOnUnDemand != "" {
+		if pconf.RunOnDemand != "" || pconf.RunOnUnDemand != "" || pconf.hasOnDemandHTTP() {
 			return fmt.Errorf("'runOnDemand' and 'runOnUnDemand' cannot be used with 'alwaysAvailable'")
 		}
 
@@ -990,11 +1024,63 @@ func (pconf *Path) validate(
 		pconf.RunOnUnavailable = *pconf.RunOnNotReady
 	}
 
-	if (pconf.RunOnDemand != "" || pconf.RunOnUnDemand != "") && pconf.Source != "publisher" {
+	if (pconf.RunOnDemand != "" || pconf.RunOnUnDemand != "" || pconf.hasOnDemandHTTP()) &&
+		pconf.Source != "publisher" {
 		return fmt.Errorf("'runOnDemand' and 'runOnUnDemand' can be used only when source is 'publisher'")
 	}
 
+	for _, entry := range []struct {
+		name    string
+		address string
+	}{
+		{"runOnDemandHTTPAddress", pconf.RunOnDemandHTTPAddress},
+		{"runOnUnDemandHTTPAddress", pconf.RunOnUnDemandHTTPAddress},
+	} {
+		if entry.address == "" {
+			continue
+		}
+		if !strings.HasPrefix(entry.address, "http://") && !strings.HasPrefix(entry.address, "https://") {
+			return fmt.Errorf("'%s' must begin with http:// or https://", entry.name)
+		}
+		if _, uerr := url.Parse(entry.address); uerr != nil {
+			return fmt.Errorf("'%s' is not a valid URL: %w", entry.name, uerr)
+		}
+	}
+
+	for _, entry := range []struct {
+		name    string
+		headers []string
+	}{
+		{"runOnDemandHTTPHeaders", pconf.RunOnDemandHTTPHeaders},
+		{"runOnUnDemandHTTPHeaders", pconf.RunOnUnDemandHTTPHeaders},
+	} {
+		for _, h := range entry.headers {
+			if !strings.Contains(h, ":") {
+				return fmt.Errorf("'%s' entry '%s' is not in 'Name: value' form", entry.name, h)
+			}
+		}
+	}
+
+	if pconf.RunOnUnDemandHTTPBody != "" && pconf.RunOnDemandHTTPAddress == "" &&
+		pconf.RunOnUnDemandHTTPAddress == "" {
+		return fmt.Errorf("'runOnUnDemandHTTPBody' requires 'runOnDemandHTTPAddress'")
+	}
+
+	pconf.RunOnDemandExcludeQueryRegexp = nil
+	if pconf.RunOnDemandExcludeQuery != "" {
+		re, rerr := regexp.Compile(pconf.RunOnDemandExcludeQuery)
+		if rerr != nil {
+			return fmt.Errorf("'runOnDemandExcludeQuery' is not a valid regular expression: %w", rerr)
+		}
+		pconf.RunOnDemandExcludeQueryRegexp = re
+	}
+
 	return nil
+}
+
+// hasOnDemandHTTP checks whether any HTTP on-demand hook is configured.
+func (pconf Path) hasOnDemandHTTP() bool {
+	return pconf.RunOnDemandHTTPAddress != "" || pconf.RunOnUnDemandHTTPAddress != ""
 }
 
 // Equal checks whether two Paths are equal.
@@ -1014,5 +1100,5 @@ func (pconf Path) HasOnDemandStaticSource() bool {
 
 // HasOnDemandPublisher checks whether the path has a on-demand publisher.
 func (pconf Path) HasOnDemandPublisher() bool {
-	return pconf.RunOnDemand != ""
+	return pconf.RunOnDemand != "" || pconf.RunOnDemandHTTPAddress != ""
 }

@@ -71,7 +71,7 @@ func (c *Cmd) runOSSpecific(cmdstr string, env []string) error {
 	// line in SysProcAttr.CmdLine, leaving Args empty.
 	if strings.HasPrefix(cmdstr, "cmd ") || strings.HasPrefix(cmdstr, "cmd.exe ") {
 		args := strings.TrimPrefix(strings.TrimPrefix(cmdstr, "cmd "), "cmd.exe ")
-		args = expandEnv(args, c.Env)
+		args = ExpandEnv(args, c.Env)
 
 		cmd = exec.Command("cmd.exe")
 		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -84,7 +84,7 @@ func (c *Cmd) runOSSpecific(cmdstr string, env []string) error {
 		}
 
 		for i, part := range cmdParts {
-			cmdParts[i] = expandEnv(part, c.Env)
+			cmdParts[i] = ExpandEnv(part, c.Env)
 		}
 
 		cmd = exec.Command(cmdParts[0], cmdParts[1:]...)

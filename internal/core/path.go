@@ -19,6 +19,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/formatlabel"
 	"github.com/bluenviron/mediamtx/internal/forward"
 	"github.com/bluenviron/mediamtx/internal/hooks"
+	"github.com/bluenviron/mediamtx/internal/httphook"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/recorder"
 	"github.com/bluenviron/mediamtx/internal/staticsources"
@@ -118,6 +119,7 @@ type path struct {
 	matches           []string
 	wg                *sync.WaitGroup
 	externalCmdPool   *externalcmd.Pool
+	httpHookPool      *httphook.Pool
 	parent            pathParent
 
 	// accessed by pathManager only
@@ -138,6 +140,7 @@ type path struct {
 	onUnavailableHook              func()
 	onOfflineHook                  func()
 	readers                        map[defs.Reader]struct{}
+	passiveReaders                 map[defs.Reader]struct{}
 	describeRequestsOnHold         []defs.PathDescribeReq
 	readerAddRequestsOnHold        []defs.PathAddReaderReq
 	onDemandStaticSourceState      pathOnDemandState
@@ -170,6 +173,7 @@ func (pa *path) initialize() {
 	pa.ctx = ctx
 	pa.ctxCancel = ctxCancel
 	pa.readers = make(map[defs.Reader]struct{})
+	pa.passiveReaders = make(map[defs.Reader]struct{})
 	pa.onDemandStaticSourceReadyTimer = emptyTimer()
 	pa.onDemandStaticSourceCloseTimer = emptyTimer()
 	pa.onDemandPublisherReadyTimer = emptyTimer()
@@ -561,6 +565,13 @@ func (pa *path) doDescribe(req defs.PathDescribeReq) {
 	}
 
 	if pa.conf.HasOnDemandPublisher() {
+		// a passive request must not summon a publisher: it is refused rather
+		// than held, so that health checks fail fast instead of timing out.
+		if pa.isPassiveQuery(req.AccessRequest.Query) {
+			req.Res <- defs.PathDescribeRes{Err: &defs.PathNoStreamAvailableError{PathName: pa.name}}
+			return
+		}
+
 		if pa.onDemandPublisherState == pathOnDemandStateInitial {
 			pa.onDemandPublisherStart(req.AccessRequest.Query)
 		}
@@ -660,6 +671,11 @@ func (pa *path) doAddReader(req defs.PathAddReaderReq) {
 	}
 
 	if pa.conf.HasOnDemandPublisher() {
+		if pa.isPassiveQuery(req.AccessRequest.Query) {
+			req.Res <- defs.PathAddReaderRes{Err: &defs.PathNoStreamAvailableError{PathName: pa.name}}
+			return
+		}
+
 		if pa.onDemandPublisherState == pathOnDemandStateInitial {
 			pa.onDemandPublisherStart(req.AccessRequest.Query)
 		}
@@ -676,7 +692,7 @@ func (pa *path) doRemoveReader(req defs.PathRemoveReaderReq) {
 	}
 	close(req.Res)
 
-	if len(pa.readers) == 0 {
+	if pa.demandingReaderCount() == 0 {
 		if pa.conf.HasOnDemandStaticSource() {
 			if pa.onDemandStaticSourceState == pathOnDemandStateReady {
 				pa.onDemandStaticSourceScheduleClose()
@@ -828,6 +844,19 @@ func (pa *path) ExternalCmdEnv() externalcmd.Environment {
 	return env
 }
 
+// isPassiveQuery reports whether a request with this query must neither start
+// an on-demand publisher nor keep one alive.
+func (pa *path) isPassiveQuery(query string) bool {
+	re := pa.conf.RunOnDemandExcludeQueryRegexp
+	return re != nil && re.MatchString(query)
+}
+
+// demandingReaderCount returns the number of readers that keep an on-demand
+// publisher alive, i.e. all of them except the passive ones.
+func (pa *path) demandingReaderCount() int {
+	return len(pa.readers) - len(pa.passiveReaders)
+}
+
 func (pa *path) shouldClose() bool {
 	return pa.conf.Regexp != nil &&
 		pa.source == nil &&
@@ -867,6 +896,7 @@ func (pa *path) onDemandPublisherStart(query string) {
 	pa.onUnDemandHook = hooks.OnDemand(hooks.OnDemandParams{
 		Logger:          pa,
 		ExternalCmdPool: pa.externalCmdPool,
+		HTTPHookPool:    pa.httpHookPool,
 		Conf:            pa.conf,
 		ExternalCmdEnv:  pa.ExternalCmdEnv(),
 		Query:           query,
@@ -1074,6 +1104,7 @@ func (pa *path) startRecording() {
 
 func (pa *path) executeRemoveReader(r defs.Reader) {
 	delete(pa.readers, r)
+	delete(pa.passiveReaders, r)
 }
 
 func (pa *path) executeRemovePublisher() {
@@ -1102,6 +1133,13 @@ func (pa *path) addReaderPost(req defs.PathAddReaderReq) {
 	}
 
 	pa.readers[req.Author] = struct{}{}
+
+	// a passive reader is served, but must not cancel a pending close.
+	if pa.isPassiveQuery(req.AccessRequest.Query) {
+		pa.passiveReaders[req.Author] = struct{}{}
+		req.Res <- defs.PathAddReaderRes{Stream: pa.stream}
+		return
+	}
 
 	if pa.conf.HasOnDemandStaticSource() {
 		if pa.onDemandStaticSourceState == pathOnDemandStateClosing {

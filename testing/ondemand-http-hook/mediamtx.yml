@@ -1,0 +1,31 @@
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+logLevel: info
+
+pathDefaults:
+  runOnDemandStartTimeout: 20s
+  runOnDemandCloseAfter: 10s
+
+paths:
+  # path names are "cmpid-locid/camid" -> $G1 cmpid, $G2 locid, $G3 camid
+  '~^([^/]+)-([^/]+)/(.+)$':
+    # --- real staging API (default) ---
+    # runOnDemandHTTPAddress: https://api-wocam-staging.wobot.ai/api/v1/camera/smart-streamer/initiate
+
+    # --- mock API instead, for fully offline testing ---
+    # run `docker compose --profile mock up --build` and swap the address to:
+    runOnDemandHTTPAddress: http://mock-api:9999/api/v1/camera/smart-streamer/initiate
+
+    runOnDemandHTTPHeaders:
+      - 'Content-Type: application/json'
+      - 'x-api-key: $WOCAM_API_KEY'
+    runOnDemandHTTPBody: '{"camera":"$G3","type":"start","requestSource":"live","initiateVia":"API"}'
+    runOnUnDemandHTTPBody: '{"camera":"$G3","type":"stop","requestSource":"live","initiateVia":"API"}'
+    runOnDemandHTTPKey: '$G3'
+
+    # requests whose query matches this are served without starting or
+    # sustaining the stream - point a health check here, e.g.
+    # rtsp://localhost:8554/acme-nyc/cam42?type=healthcheck
+    runOnDemandExcludeQuery: 'type=healthcheck'

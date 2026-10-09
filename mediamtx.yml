@@ -799,6 +799,47 @@ pathDefaults:
   # Environment variables are the same as runOnDemand.
   runOnUnDemand:
 
+  # URL to call with an HTTP request when the path is requested by a reader.
+  # This is an alternative to runOnDemand for publishers that are started
+  # through an API rather than by a local command.
+  # The request is performed asynchronously and does not block the path.
+  # The same variables available to runOnDemand can be used in the address,
+  # headers and body, in $VAR form; variables that are not among them are
+  # looked up in the process environment, which allows keeping secrets out
+  # of this file.
+  runOnDemandHTTPAddress:
+  # Headers of the request, in "Name: value" form.
+  runOnDemandHTTPHeaders: []
+  # Body of the request.
+  runOnDemandHTTPBody:
+  # URL to call when there are no readers anymore.
+  # If empty, runOnDemandHTTPAddress is used.
+  runOnUnDemandHTTPAddress:
+  # Headers of the un-demand request, in "Name: value" form.
+  # If empty, runOnDemandHTTPHeaders is used.
+  runOnUnDemandHTTPHeaders: []
+  # Body of the un-demand request.
+  runOnUnDemandHTTPBody:
+  # Regular expression matched against the query of a reader request.
+  # Matching readers are passive: they never start an on-demand publisher and
+  # never keep one alive. They are served if the stream is already available
+  # and refused otherwise. Intended for health checks and similar probes,
+  # for instance with a request like rtsp://host/mypath?type=healthcheck
+  runOnDemandExcludeQuery:
+  # Key used to serialize demand and un-demand requests against each other.
+  # Requests that share a key are never performed concurrently nor out of
+  # order. Set this to the identifier of the remote stream when the same
+  # stream can be reached through multiple path names.
+  runOnDemandHTTPKey: $MTX_PATH
+  # Timeout of a single demand or un-demand request.
+  runOnDemandHTTPTimeout: 10s
+  # Maximum number of retries of a failed request.
+  # Only transport errors and the status codes 408, 429 and 5xx are retried;
+  # demand requests are additionally bounded by runOnDemandStartTimeout.
+  runOnDemandHTTPRetries: 3
+  # Interval between the first two attempts. It doubles after each attempt.
+  runOnDemandHTTPRetryInterval: 2s
+
   # Command to run when the stream is available to be read.
   # This is terminated with SIGINT when the stream is not available anymore.
   # The following environment variables are available:

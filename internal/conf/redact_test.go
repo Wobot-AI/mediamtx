@@ -65,3 +65,43 @@ func TestRedact(t *testing.T) {
 	require.Equal(t, "<redacted>", string(*c2.Paths["path2"].PublishPass))
 	require.Equal(t, "<redacted>", string(*c2.Paths["path2"].ReadPass))
 }
+
+func TestRedactHTTPHookHeaders(t *testing.T) {
+	c := conf.Conf{
+		PathDefaults: conf.Path{
+			RunOnDemandHTTPHeaders: []string{
+				"Content-Type: application/json",
+				"x-api-key: defaultsecret",
+			},
+		},
+		Paths: map[string]*conf.Path{
+			"path1": {
+				RunOnDemandHTTPHeaders: []string{"x-api-key: startsecret"},
+				RunOnUnDemandHTTPHeaders: []string{
+					"Authorization: Bearer stopsecret",
+					"X-Custom: alsosecret",
+				},
+			},
+		},
+	}
+
+	redacted := conf.Redact(&c)
+
+	require.Equal(t, []string{
+		"Content-Type: <redacted>",
+		"x-api-key: <redacted>",
+	}, redacted.PathDefaults.RunOnDemandHTTPHeaders)
+
+	require.Equal(t, []string{"x-api-key: <redacted>"},
+		redacted.Paths["path1"].RunOnDemandHTTPHeaders)
+
+	// every value is redacted, not only recognised credential header names
+	require.Equal(t, []string{
+		"Authorization: <redacted>",
+		"X-Custom: <redacted>",
+	}, redacted.Paths["path1"].RunOnUnDemandHTTPHeaders)
+
+	// the original must be untouched
+	require.Equal(t, "x-api-key: defaultsecret", c.PathDefaults.RunOnDemandHTTPHeaders[1])
+	require.Equal(t, "x-api-key: startsecret", c.Paths["path1"].RunOnDemandHTTPHeaders[0])
+}

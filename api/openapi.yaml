@@ -1212,6 +1212,33 @@ components:
           type: string
         runOnDemandCloseAfter:
           type: string
+        runOnDemandExcludeQuery:
+          type: string
+          description: "regular expression matched against the query of a reader request. Matching readers are passive: they never start an on-demand publisher and never keep one alive. They are served if the stream is already available and refused otherwise. Intended for health checks and similar probes."
+        runOnDemandHTTPAddress:
+          type: string
+          description: URL to call with an HTTP request when the path is requested by a reader.
+        runOnDemandHTTPBody:
+          type: string
+          description: body of the runOnDemandHTTPAddress request.
+        runOnDemandHTTPHeaders:
+          type: array
+          description: "headers of the runOnDemandHTTPAddress request, in \"Name: value\" form."
+          items:
+            type: string
+        runOnDemandHTTPKey:
+          type: string
+          description: key used to serialize demand and un-demand requests against each other. Requests sharing a key are never performed concurrently nor out of order.
+        runOnDemandHTTPRetries:
+          type: integer
+          format: int64
+          description: maximum number of retries of a failed demand or un-demand HTTP request.
+        runOnDemandHTTPRetryInterval:
+          type: string
+          description: interval between the first two attempts; it doubles after each attempt.
+        runOnDemandHTTPTimeout:
+          type: string
+          description: timeout of a single demand or un-demand HTTP request.
         runOnDemandRestart:
           type: boolean
         runOnDemandStartTimeout:
@@ -1249,6 +1276,17 @@ components:
           type: string
         runOnUnDemand:
           type: string
+        runOnUnDemandHTTPAddress:
+          type: string
+          description: URL to call with an HTTP request when the path is no longer requested by any reader. If empty, runOnDemandHTTPAddress is used.
+        runOnUnDemandHTTPBody:
+          type: string
+          description: body of the runOnUnDemandHTTPAddress request.
+        runOnUnDemandHTTPHeaders:
+          type: array
+          description: "headers of the runOnUnDemandHTTPAddress request, in \"Name: value\" form. If empty, runOnDemandHTTPHeaders is used."
+          items:
+            type: string
         runOnUnavailable:
           type: string
         runOnUnread:
