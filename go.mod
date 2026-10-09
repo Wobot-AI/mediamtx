@@ -105,3 +105,7 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
+
+// Qubo fix: decimal-only RTSP session IDs for cameras that mis-parse UUID-hex
+// session IDs (Session: header truncated at first non-digit character).
+replace github.com/bluenviron/gortsplib/v5 => ./third_party/gortsplib-qubofix
